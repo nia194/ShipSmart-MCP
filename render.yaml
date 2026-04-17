@@ -1,0 +1,40 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ShipSmart-MCP — Render Blueprint
+# MCP Server exposing shipping tools (validate_address, get_quote_preview, …)
+# for ShipSmart-API (Python), ShipSmart-Orchestrator (Java), and any other
+# MCP-compatible client.
+#
+# BEFORE DEPLOYING: Set all sync:false env vars in the Render dashboard.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  - type: web
+    name: shipsmart-mcp
+    env: python
+    buildCommand: pip install uv && uv sync
+    startCommand: uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://shipsmart-api-python.onrender.com,https://shipsmart-api-java.onrender.com,https://shipsmart-web.onrender.com
+      # Shared secret checked by all MCP clients. Set in the Render dashboard
+      # and in each consumer service's SHIPSMART_MCP_API_KEY.
+      - key: MCP_API_KEY
+        sync: false
+      # ── Shipping Provider ────────────────────────────────────────────────
+      - key: SHIPPING_PROVIDER
+        value: fedex
+      - key: FEDEX_CLIENT_ID
+        sync: false
+      - key: FEDEX_CLIENT_SECRET
+        sync: false
+      - key: FEDEX_ACCOUNT_NUMBER
+        sync: false
+      - key: FEDEX_BASE_URL
+        value: https://apis-sandbox.fedex.com
