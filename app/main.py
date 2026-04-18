@@ -110,6 +110,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+from app.core.middleware import RequestLoggingMiddleware
+
+app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
