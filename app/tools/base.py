@@ -11,6 +11,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from jsonschema import Draft202012Validator
+
 
 @dataclass
 class ToolInput:
@@ -77,10 +79,42 @@ class Tool(ABC):
             ],
         }
 
+    def input_schema(self) -> dict[str, Any]:
+        """Full JSON Schema (draft 2020-12) for this tool's arguments.
+
+        This single schema is the source of truth for BOTH ``/tools/list``
+        discovery and ``validate_input`` below. The default here is derived from
+        ``parameters`` — typed properties, a ``required`` list, and
+        ``additionalProperties: False`` so unexpected fields are rejected.
+        Concrete tools override this to add real constraints (patterns, numeric
+        ranges, enums); see ``ValidateAddressTool`` / ``GetQuotePreviewTool``.
+        """
+        properties: dict[str, Any] = {}
+        required: list[str] = []
+        for p in self.parameters:
+            properties[p.name] = {"type": p.type, "description": p.description}
+            if p.required:
+                required.append(p.name)
+        return {
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": False,
+        }
+
     def validate_input(self, params: dict[str, Any]) -> list[str]:
-        """Validate params against the parameter schema. Returns error messages."""
-        errors: list[str] = []
-        for param in self.parameters:
-            if param.required and param.name not in params:
-                errors.append(f"Missing required parameter: {param.name}")
-        return errors
+        """Validate ``params`` against ``input_schema()`` using JSON Schema.
+
+        Returns a list of human-readable error messages (empty list = valid).
+        The HTTP layer calls this BEFORE ``execute()`` and, on any error,
+        returns ``success=false`` with the joined messages — so malformed input
+        never reaches a provider. The ``list[str]`` return type is unchanged
+        from the original presence-only implementation, so callers are
+        unaffected.
+        """
+        validator = Draft202012Validator(self.input_schema())
+        messages: list[str] = []
+        for err in sorted(validator.iter_errors(params), key=lambda e: list(e.path)):
+            location = ".".join(str(p) for p in err.path)
+            messages.append(f"{location}: {err.message}" if location else err.message)
+        return messages
