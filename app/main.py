@@ -10,6 +10,18 @@ Local dev:
 
 Production (Render):
     uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+SECURITY / LEAST-PRIVILEGE INVARIANT
+------------------------------------
+This server is strictly READ-ONLY. Every tool it serves is a pure read/preview
+operation (address validation, non-binding rate preview). No tool or provider
+writes to a database, mutates persistent state, moves money, or performs a
+privileged/booking action — those belong exclusively to the Java Orchestrator,
+the single writer of record. The invariant is enforced, not just documented:
+the registry is constrained to ``READ_ONLY_TOOL_ALLOWLIST`` and ``_build_registry``
+fails fast if a tool outside that allowlist is ever registered. Every tool input
+is fully validated against a JSON Schema BEFORE execution (see
+``app/tools/base.py``).
 """
 
 from __future__ import annotations
@@ -24,6 +36,7 @@ from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.logging import get_logger, setup_logging
+from app.core.middleware import RequestLoggingMiddleware
 from app.providers import create_shipping_provider
 from app.tools.address_tools import ValidateAddressTool
 from app.tools.base import ToolInput, ToolOutput
@@ -38,6 +51,27 @@ logger = get_logger(__name__)
 
 _tool_registry: ToolRegistry | None = None
 
+# Least-privilege invariant: this server exposes ONLY read/preview tools.
+# Registering a tool that writes state, moves money, or books anything is a
+# design error — that behavior belongs in the Java Orchestrator. The build
+# enforces this allowlist so the mistake fails loudly at startup, not silently.
+READ_ONLY_TOOL_ALLOWLIST: frozenset[str] = frozenset(
+    {"validate_address", "get_quote_preview"}
+)
+
+
+def _enforce_read_only(registry: ToolRegistry) -> None:
+    """Fail fast if the registry serves any tool outside the read-only allowlist."""
+    served = {tool.name for tool in registry.list_tools()}
+    forbidden = served - READ_ONLY_TOOL_ALLOWLIST
+    if forbidden:
+        raise RuntimeError(
+            f"Refusing to start: non-read-only tool(s) registered: {sorted(forbidden)}. "
+            "ShipSmart-MCP serves read/preview tools only; writes, bookings, and "
+            "money movement belong to the Java Orchestrator. Update "
+            "READ_ONLY_TOOL_ALLOWLIST only if the new tool is genuinely read-only."
+        )
+
 
 def _build_registry() -> ToolRegistry:
     """Build the tool registry with the configured shipping provider.
@@ -49,6 +83,7 @@ def _build_registry() -> ToolRegistry:
     provider = create_shipping_provider()
     registry.register(ValidateAddressTool(provider))
     registry.register(GetQuotePreviewTool(provider))
+    _enforce_read_only(registry)
     return registry
 
 
@@ -109,8 +144,6 @@ app = FastAPI(
     redoc_url="/redoc" if not settings.is_production else None,
     lifespan=lifespan,
 )
-
-from app.core.middleware import RequestLoggingMiddleware
 
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(
@@ -183,28 +216,14 @@ async def list_tools() -> MCPToolListResponse:
     tool_definitions: list[MCPToolDefinition] = []
     for tool in tools:
         schema = tool.schema()
-
-        properties: dict[str, dict[str, Any]] = {}
-        required: list[str] = []
-        for param in tool.parameters:
-            properties[param.name] = {
-                "type": param.type,
-                "description": param.description,
-            }
-            if param.required:
-                required.append(param.name)
-
-        input_schema = {
-            "type": "object",
-            "properties": properties,
-            "required": required,
-        }
-
+        # input_schema() is the tool's full JSON Schema (typed properties,
+        # required, additionalProperties:false, patterns/ranges). The same
+        # schema is what validate_input enforces on /tools/call.
         tool_definitions.append(
             MCPToolDefinition(
                 name=schema["name"],
                 description=schema["description"],
-                input_schema=input_schema,
+                input_schema=tool.input_schema(),
             )
         )
 
