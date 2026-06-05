@@ -83,7 +83,8 @@ def create_shipping_provider() -> ShippingProvider:
         logger.warning(
             "SHIPPING_PROVIDER=mock — using MockShippingProvider. "
             "All quote previews and address validations return FAKE data. "
-            "Set SHIPPING_PROVIDER={ups,fedex,dhl,usps} with credentials for real carrier integration."
+            "Set SHIPPING_PROVIDER={ups,fedex,dhl,usps} with credentials "
+            "for real carrier integration."
         )
         return _build_mock()
 
