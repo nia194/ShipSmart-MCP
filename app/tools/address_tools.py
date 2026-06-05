@@ -6,6 +6,7 @@ Validates and normalizes shipping addresses through the provider abstraction.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from app.providers.shipping_provider import AddressInput, ShippingProvider
 from app.tools.base import Tool, ToolInput, ToolOutput, ToolParameter
@@ -42,6 +43,44 @@ class ValidateAddressTool(Tool):
                 required=False,
             ),
         ]
+
+    def input_schema(self) -> dict[str, Any]:
+        """Strict JSON Schema: non-empty street/city, 2-letter state code, US
+        ZIP (5 or ZIP+4), and an optional country enum that defaults to US.
+        Unexpected fields are rejected (additionalProperties: false)."""
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["street", "city", "state", "zip_code"],
+            "properties": {
+                "street": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Street address line",
+                },
+                "city": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "City name",
+                },
+                "state": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z]{2}$",
+                    "description": "2-letter state code (e.g. CA, NY)",
+                },
+                "zip_code": {
+                    "type": "string",
+                    "pattern": r"^\d{5}(-\d{4})?$",
+                    "description": "US ZIP code: 5-digit or ZIP+4 (e.g. 90210 or 90210-1234)",
+                },
+                "country": {
+                    "type": "string",
+                    "enum": ["US", "CA", "MX"],
+                    "default": "US",
+                    "description": "ISO country code (default US)",
+                },
+            },
+        }
 
     async def execute(self, tool_input: ToolInput) -> ToolOutput:
         params = tool_input.params
