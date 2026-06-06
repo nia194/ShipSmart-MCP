@@ -274,10 +274,19 @@ If `MCP_API_KEY` is set, add `-H "X-MCP-Api-Key: $MCP_API_KEY"` to the
 ## Tests
 
 ```bash
-uv run pytest
+uv run pytest          # 93 tests, ~0.5s, no network
 ```
 
-Tests live under `tests/` and use `pytest-asyncio` (async mode = auto).
+Tests live under `tests/` and use `pytest-asyncio` (async mode = auto). What they cover:
+
+| File | Focus |
+| --- | --- |
+| `test_mcp_http.py` | The HTTP contract: `/health`, `/`, `/tools/list`, `/tools/call`, the `X-MCP-Api-Key` gate (and that liveness probes bypass it), schema validation rejecting malformed input *before* the provider runs, the read-only invariant, and execute-time errors mapping to `success=false` (HTTP 200, never a 500). |
+| `test_schema_edge_cases.py` | Accepted/rejected JSON-Schema boundaries (ZIP+4, weight/dimension maxima, type coercion). |
+| `test_tools.py` / `test_registry.py` | Tool execution + registry (dedup, sorting, schema shape). |
+| `test_provider.py` / `test_provider_factory.py` | Mock provider behavior, the carrier factory (credential gating, case-insensitivity), and per-carrier `name`/DHL local validation. |
+
+The tool schemas here are also asserted from `ShipSmart-Test/contract/` so a rename can't silently break ShipSmart-API or the Web client.
 
 ---
 
