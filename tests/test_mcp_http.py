@@ -126,6 +126,30 @@ def test_api_key_not_enforced_when_empty(client, monkeypatch):
     assert resp.status_code == 200
 
 
+def test_health_and_root_bypass_api_key_gate(client, monkeypatch):
+    """The API-key gate guards only /tools/*; the liveness/discovery probes
+    (/health, /) must stay reachable WITHOUT the shared secret so a load
+    balancer or uptime check can poll them. /tools/* stays gated."""
+    monkeypatch.setattr(settings, "mcp_api_key", "secret-token", raising=False)
+    assert client.get("/health").status_code == 200
+    assert client.get("/").status_code == 200
+    assert client.post("/tools/list").status_code == 401  # tools still gated
+
+
+def test_validate_address_country_is_optional_and_defaults(client):
+    """`country` is optional by contract (absent from `required`) and defaults
+    to US in execute(); omitting it must still validate and succeed."""
+    schema = {
+        t["name"]: t["input_schema"] for t in client.post("/tools/list").json()["tools"]
+    }["validate_address"]
+    assert "country" not in schema["required"]   # optional…
+    assert "country" in schema["properties"]     # …but advertised
+    resp = client.post(
+        "/tools/call", json={"name": "validate_address", "arguments": _VALID_ADDR}
+    )
+    assert resp.status_code == 200 and resp.json()["success"] is True
+
+
 # ── /tools/list now emits a rich JSON Schema ─────────────────────────────────
 
 
@@ -236,6 +260,22 @@ def test_valid_input_passes_gate_to_execute(client, boom_provider):
     )
     assert resp.status_code == 200
     assert boom_provider.calls == 1
+
+
+def test_provider_exception_during_execute_is_mapped_to_failure(client, boom_provider):
+    """A provider that raises *after* clearing validation is caught by the
+    /tools/call handler and reported as success=false on HTTP 200 — never a 500
+    or a leaked stack trace. This locks the handler's execute-time error branch
+    so a flaky carrier degrades gracefully for every consumer."""
+    resp = client.post(
+        "/tools/call", json={"name": "validate_address", "arguments": _VALID_ADDR}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is False
+    assert body["content"] == []     # no content emitted on a thrown execute
+    assert body["error"]             # the failure reason is surfaced to the caller
+    assert boom_provider.calls == 1  # the failure came from execute(), not the gate
 
 
 def test_valid_call_content_shape_unchanged(client):
