@@ -104,3 +104,35 @@ async def test_quote_preview_input_validation(provider):
     tool = GetQuotePreviewTool(provider)
     errors = tool.validate_input({"origin_zip": "90210"})
     assert len(errors) >= 5  # missing destination_zip, weight, l, w, h
+
+
+# ── Shipping scope (domestic-only deployment) ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_validate_address_rejects_foreign_country_when_domestic(provider, monkeypatch):
+    from app.core import config as cfg
+
+    monkeypatch.setattr(cfg.settings, "shipping_scope", "domestic", raising=False)
+    monkeypatch.setattr(cfg.settings, "domestic_country", "US", raising=False)
+    tool = ValidateAddressTool(provider)
+    result = await tool.execute(ToolInput(params={
+        "street": "1 king st", "city": "toronto", "state": "ON",
+        "zip_code": "90210", "country": "CA",
+    }))
+    assert result.success is False
+    assert "not supported" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_validate_address_allows_home_country_when_domestic(provider, monkeypatch):
+    from app.core import config as cfg
+
+    monkeypatch.setattr(cfg.settings, "shipping_scope", "domestic", raising=False)
+    monkeypatch.setattr(cfg.settings, "domestic_country", "US", raising=False)
+    tool = ValidateAddressTool(provider)
+    result = await tool.execute(ToolInput(params={
+        "street": "123 main st", "city": "los angeles", "state": "ca",
+        "zip_code": "90210", "country": "US",
+    }))
+    assert result.success is True
