@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.core.config import settings
 from app.providers.shipping_provider import AddressInput, ShippingProvider
 from app.tools.base import Tool, ToolInput, ToolOutput, ToolParameter
 
@@ -84,12 +85,25 @@ class ValidateAddressTool(Tool):
 
     async def execute(self, tool_input: ToolInput) -> ToolOutput:
         params = tool_input.params
+        country = params.get("country", "US")
+
+        # Domestic-only deployments serve the home country only (no-op when worldwide).
+        if settings.is_domestic_scope and (country or "").strip().upper() != settings.home_country:
+            return ToolOutput(
+                success=False,
+                error=(
+                    f"This deployment serves {settings.home_country} only; "
+                    f"country {country} is not supported."
+                ),
+                metadata={"tool": self.name},
+            )
+
         address = AddressInput(
             street=params.get("street", ""),
             city=params.get("city", ""),
             state=params.get("state", ""),
             zip_code=params.get("zip_code", ""),
-            country=params.get("country", "US"),
+            country=country,
         )
 
         logger.info("Validating address via provider=%s", self._provider.name)
