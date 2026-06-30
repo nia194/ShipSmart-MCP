@@ -204,6 +204,19 @@ calls into a `ShippingProvider` chosen at startup. New tools land in
 carriers land in `app/providers/` and slot into the
 `SHIPPING_PROVIDER` switch.
 
+### Read-only least-privilege invariant
+
+This server is strictly **read-only**: every tool it serves is a pure
+read/preview operation (address validation, non-binding rate preview).
+No tool or provider writes to a database, mutates persistent state,
+moves money, or books anything — those actions belong exclusively to the
+Java Orchestrator, the single writer of record. The invariant is
+*enforced, not just documented*: `app/main.py` constrains the registry
+to a `READ_ONLY_TOOL_ALLOWLIST` (`validate_address`, `get_quote_preview`)
+and `_build_registry()` raises at startup if any tool outside that
+allowlist is ever registered. Every tool input is also fully validated
+against its JSON Schema *before* execution.
+
 ---
 
 ## Configuration
@@ -218,6 +231,8 @@ dev). See [`.env.example`](./.env.example) for the full list and defaults.
 | `LOG_LEVEL`                               | Standard logging level (default `INFO`).                             |
 | `CORS_ALLOWED_ORIGINS`                    | Comma-separated origins allowed by the CORS middleware.              |
 | `MCP_API_KEY`                             | Shared secret enforced on `/tools/*`. Empty disables auth.           |
+| `SHIPPING_SCOPE`                          | `worldwide` (default) or `domestic`. `domestic` makes `validate_address` reject any address outside `DOMESTIC_COUNTRY`. Mirrors ShipSmart-API's `SHIPPING_SCOPE`. |
+| `DOMESTIC_COUNTRY`                        | ISO-3166 alpha-2 home country enforced when scope is `domestic` (default `US`). |
 | `SHIPPING_PROVIDER`                       | One of `mock`, `ups`, `fedex`, `dhl`, `usps`.                        |
 | `UPS_*` / `FEDEX_*` / `DHL_*` / `USPS_*`  | Per-carrier credentials and base URLs.                               |
 
@@ -274,7 +289,7 @@ If `MCP_API_KEY` is set, add `-H "X-MCP-Api-Key: $MCP_API_KEY"` to the
 ## Tests
 
 ```bash
-uv run pytest          # 93 tests, ~0.5s, no network
+uv run pytest          # 95 tests, ~0.5s, no network
 ```
 
 Tests live under `tests/` and use `pytest-asyncio` (async mode = auto). What they cover:
