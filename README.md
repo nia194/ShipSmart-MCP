@@ -303,6 +303,16 @@ Tests live under `tests/` and use `pytest-asyncio` (async mode = auto). What the
 
 The tool schemas here are also asserted from `ShipSmart-Test/contract/` so a rename can't silently break ShipSmart-API or the Web client.
 
+### Lint & formatting
+
+```bash
+uv run ruff check .          # lint (line length, imports, pyflakes)
+```
+
+A `.pre-commit-config.yaml` wires **ruff** plus hygiene hooks (end-of-file fixer, trailing
+whitespace, YAML, merge-conflict) — install once with `uvx pre-commit install`. CI
+(`.github/workflows/ci.yml`) runs `ruff check .` then `pytest -q` on every push / PR.
+
 ---
 
 ## Observability
