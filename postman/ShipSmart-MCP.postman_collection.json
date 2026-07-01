@@ -1,0 +1,351 @@
+{
+  "info": {
+    "name": "ShipSmart-MCP",
+    "description": "MCP tool server contract: discovery, tools/list, tools/call, the read-only invariant, and the validation-vs-execute error split. Runs against the mock provider.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test('no server error', () => pm.expect(pm.response.code).to.be.below(500));",
+          "pm.test('responds < 2s', () => pm.expect(pm.response.responseTime).to.be.below(2000));"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8001"
+    },
+    {
+      "key": "MCP_API_KEY",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Discovery & liveness",
+      "item": [
+        {
+          "name": "GET /health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('healthy + tool count', () => { pm.expect(b.status).to.eql('healthy'); pm.expect(b.tools).to.be.a('number'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          }
+        },
+        {
+          "name": "GET / (service discovery)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('endpoints map', () => pm.expect(b.endpoints).to.have.property('tools_call'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                ""
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "tools/list",
+      "item": [
+        {
+          "name": "POST /tools/list",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const names = pm.response.json().tools.map(t => t.name);",
+                  "pm.test('exposes both tools', () => { pm.expect(names).to.include('validate_address'); pm.expect(names).to.include('get_quote_preview'); });",
+                  "pm.test('read-only invariant (no write tools)', () => pm.expect(names.filter(n => /book|write|save|create|delete/.test(n))).to.be.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "X-MCP-Api-Key",
+                "value": "{{MCP_API_KEY}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/tools/list",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "tools",
+                "list"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "tools/call \u2014 happy",
+      "item": [
+        {
+          "name": "validate_address (valid)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('success true', () => pm.expect(pm.response.json().success).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "X-MCP-Api-Key",
+                "value": "{{MCP_API_KEY}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/tools/call",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "tools",
+                "call"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"validate_address\",\n  \"arguments\": {\n    \"street\": \"1 Infinite Loop\",\n    \"city\": \"Cupertino\",\n    \"state\": \"CA\",\n    \"zip_code\": \"95014\"\n  }\n}"
+            }
+          }
+        },
+        {
+          "name": "get_quote_preview (valid, with dims)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('success true', () => pm.expect(pm.response.json().success).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "X-MCP-Api-Key",
+                "value": "{{MCP_API_KEY}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/tools/call",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "tools",
+                "call"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"get_quote_preview\",\n  \"arguments\": {\n    \"origin_zip\": \"60601\",\n    \"destination_zip\": \"02108\",\n    \"weight_lbs\": 5,\n    \"length_in\": 12,\n    \"width_in\": 9,\n    \"height_in\": 6\n  }\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "tools/call \u2014 error semantics",
+      "item": [
+        {
+          "name": "unknown tool -> 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 unknown tool', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "X-MCP-Api-Key",
+                "value": "{{MCP_API_KEY}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/tools/call",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "tools",
+                "call"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"no_such_tool\",\n  \"arguments\": {}\n}"
+            }
+          }
+        },
+        {
+          "name": "schema-invalid -> 200 success:false (not 4xx/5xx)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200 (tool-level, not protocol)', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('success false + validation error', () => { pm.expect(b.success).to.be.false; pm.expect(b.error).to.match(/required/i); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "X-MCP-Api-Key",
+                "value": "{{MCP_API_KEY}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/tools/call",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "tools",
+                "call"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"get_quote_preview\",\n  \"arguments\": {\n    \"origin_zip\": \"60601\",\n    \"destination_zip\": \"02108\",\n    \"weight_lbs\": 5\n  }\n}"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
