@@ -42,7 +42,7 @@ implementing tools in-process.
 
 ## The ShipSmart ecosystem
 
-This service is one of five sibling repositories. Clone them as siblings
+This service is one of six sibling repositories. Clone them as siblings
 of this directory when working on the full system.
 
 | Repo | Role | Stack |
@@ -52,6 +52,7 @@ of this directory when working on the full system.
 | [ShipSmart-API](https://github.com/nia194/ShipSmart-API) | Python AI/orchestration service — RAG, advisors, recommendations, compliance (UC2), multi-agent workflow (UC3/UC4) | FastAPI, Python 3.13 |
 | **[ShipSmart-MCP](https://github.com/nia194/ShipSmart-MCP)** _(this repo)_ | MCP tool server — `validate_address`, `get_quote_preview` (provider-pluggable) | FastAPI + MCP |
 | [ShipSmart-Infra](https://github.com/nia194/ShipSmart-Infra) | Supabase migrations + edge functions, deployment configs, docs | Supabase, Render blueprints |
+| [ShipSmart-Test](https://github.com/nia194/ShipSmart-Test) | Cross-repo integration harness — contract + live e2e suites, cross-service Postman collection | Python 3.13, pytest |
 
 ```
             ┌──────────────────────────────┐
@@ -283,6 +284,24 @@ curl -s -X POST http://localhost:8001/tools/call \
 
 If `MCP_API_KEY` is set, add `-H "X-MCP-Api-Key: $MCP_API_KEY"` to the
 `/tools/*` calls.
+
+### Postman collection
+
+[`postman/ShipSmart-MCP.postman_collection.json`](./postman/ShipSmart-MCP.postman_collection.json)
+walks the same contract with assertions on every request: discovery + liveness,
+`tools/list`, a happy-path `tools/call` for both tools, and the error semantics
+this README documents (unknown tool → `404`; schema-invalid input → `200` with
+`success:false`, never a 4xx/5xx). Every request pins an `X-Request-Id`, and the
+`/tools/*` requests already carry the `X-MCP-Api-Key` header — filling the
+environment's `MCP_API_KEY` variable (empty by default for a no-auth local boot)
+is all that auth needs. Import it with
+[`postman/environments/local.postman_environment.json`](./postman/environments/local.postman_environment.json)
+(`base_url` defaults to `http://127.0.0.1:8001`), or run it headless:
+
+```bash
+npx newman run postman/ShipSmart-MCP.postman_collection.json \
+  -e postman/environments/local.postman_environment.json
+```
 
 ---
 
