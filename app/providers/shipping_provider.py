@@ -1,7 +1,7 @@
 """
 Shipping provider abstraction.
-Defines the interface for carrier-facing operations: address validation,
-quote previews, dropoff locations, etc.
+Defines the interface for carrier-facing operations: address validation
+and quote previews.
 
 Concrete implementations (mock, UPS, FedEx, etc.) implement this interface.
 Tools call providers through this abstraction — never directly.
