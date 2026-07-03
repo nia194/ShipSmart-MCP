@@ -158,7 +158,7 @@ app.add_middleware(
 # ── Schemas ──────────────────────────────────────────────────────────────────
 
 class MCPToolDefinition(BaseModel):
-    """MCP tool definition (compatible with Claude API)."""
+    """MCP tool definition."""
     name: str
     description: str
     input_schema: dict[str, Any]
