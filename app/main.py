@@ -40,10 +40,12 @@ from app.core.middleware import RequestLoggingMiddleware
 from app.providers import create_shipping_provider
 from app.tools.address_tools import ValidateAddressTool
 from app.tools.base import ToolInput, ToolOutput
+from app.tools.compliance_tools import CheckRestrictedItemsTool
 from app.tools.package_tools import (
     CalculateDimensionalWeightTool,
     EstimatePackageProfileTool,
 )
+from app.tools.parse_tools import ParseAddressTool
 from app.tools.quote_tools import GetQuotePreviewTool
 from app.tools.registry import ToolRegistry
 
@@ -65,6 +67,8 @@ READ_ONLY_TOOL_ALLOWLIST: frozenset[str] = frozenset(
         "get_quote_preview",
         "calculate_dimensional_weight",
         "estimate_package_profile",
+        "parse_address",
+        "check_restricted_items",
     }
 )
 
@@ -94,6 +98,8 @@ def _build_registry() -> ToolRegistry:
     registry.register(GetQuotePreviewTool(provider))
     registry.register(CalculateDimensionalWeightTool())
     registry.register(EstimatePackageProfileTool())
+    registry.register(ParseAddressTool())
+    registry.register(CheckRestrictedItemsTool())
     _enforce_read_only(registry)
     return registry
 
