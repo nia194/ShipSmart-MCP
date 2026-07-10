@@ -32,6 +32,7 @@ class ToolAuditRecord:
     request_id: str = ""
     args_hash: str = ""
     status: str = "ok"            # ok | error | denied
+    error_class: str = ""         # exception/denial class when status != ok (§5.5)
     latency_ms: float = 0.0
     ts: str = ""
 
@@ -80,6 +81,7 @@ def record_tool_call(
     caller: str = "",
     request_id: str = "",
     status: str = "ok",
+    error_class: str = "",
     latency_ms: float = 0.0,
 ) -> ToolAuditRecord:
     """Build + emit a PII-safe (args-hashed) tool-audit record (best-effort)."""
@@ -90,6 +92,7 @@ def record_tool_call(
         request_id=request_id,
         args_hash=args_hash(args or {}),
         status=status,
+        error_class=error_class,
         latency_ms=latency_ms,
     )
     sink.emit(record)
