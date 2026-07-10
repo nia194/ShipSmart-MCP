@@ -40,6 +40,10 @@ from app.core.middleware import RequestLoggingMiddleware
 from app.providers import create_shipping_provider
 from app.tools.address_tools import ValidateAddressTool
 from app.tools.base import ToolInput, ToolOutput
+from app.tools.package_tools import (
+    CalculateDimensionalWeightTool,
+    EstimatePackageProfileTool,
+)
 from app.tools.quote_tools import GetQuotePreviewTool
 from app.tools.registry import ToolRegistry
 
@@ -56,7 +60,12 @@ _tool_registry: ToolRegistry | None = None
 # design error — that behavior belongs in the Java Orchestrator. The build
 # enforces this allowlist so the mistake fails loudly at startup, not silently.
 READ_ONLY_TOOL_ALLOWLIST: frozenset[str] = frozenset(
-    {"validate_address", "get_quote_preview"}
+    {
+        "validate_address",
+        "get_quote_preview",
+        "calculate_dimensional_weight",
+        "estimate_package_profile",
+    }
 )
 
 
@@ -83,6 +92,8 @@ def _build_registry() -> ToolRegistry:
     provider = create_shipping_provider()
     registry.register(ValidateAddressTool(provider))
     registry.register(GetQuotePreviewTool(provider))
+    registry.register(CalculateDimensionalWeightTool())
+    registry.register(EstimatePackageProfileTool())
     _enforce_read_only(registry)
     return registry
 
