@@ -26,16 +26,25 @@ httpx · JSON Schema Draft 2020-12 · FedEx / UPS / USPS / DHL adapters (+ mock)
 registered tool count) · [`GET /`](https://shipsmart-mcp.onrender.com/)
 discovery *(Render free tier — cold start ~30–60 s).*
 
+> **Metric convention:** structural counts (tools, tests, endpoints) are facts
+> verified against source; latency/availability figures are **(target)**
+> budgets, never measured production metrics.
+
 ---
 
 ## Table of contents
 
 - [The ShipSmart ecosystem](#the-shipsmart-ecosystem)
+- [Architecture (HLD)](#architecture-hld)
 - [The headline invariant](#the-headline-invariant)
 - [HTTP contract](#http-contract)
+- [Anatomy of a tool call](#anatomy-of-a-tool-call)
 - [Tools](#tools)
-- [Security layers](#security-layers)
-- [Architecture](#architecture)
+- [Object design (OOD)](#object-design-ood)
+- [Security layers & threat model](#security-layers--threat-model)
+- [The audit trail](#the-audit-trail)
+- [Performance & availability](#performance--availability)
+- [Deployment topology](#deployment-topology)
 - [Running locally](#running-locally)
 - [Configuration](#configuration)
 - [Tests](#tests)
@@ -61,10 +70,58 @@ that snapshots each component at a pinned commit (see its `COMPONENTS.yml`).
 
 ---
 
+## Architecture (HLD)
+
+**Figure 1 — container/component view.** Every call crosses the guard/audit/
+integrity plane before any carrier adapter runs; the registry's JSON Schemas
+power both discovery and enforcement.
+
+```mermaid
+flowchart TB
+    API["ShipSmart-API (agent / RAG / concierge)"] -->|"MCP over HTTP + X-MCP-Api-Key"| APP
+    subgraph APP["FastAPI app (app/main.py)"]
+        AUTH["require_api_key dependency"]
+        EP["GET / · GET /health · POST /tools/list · POST /tools/call"]
+        INV["_enforce_read_only(registry) at lifespan"]
+    end
+    subgraph REG["ToolRegistry (app/tools)"]
+        T1[validate_address]
+        T2[get_quote_preview]
+        T3[calculate_dimensional_weight]
+        T4[estimate_package_profile]
+        T5[parse_address]
+        T6[check_restricted_items]
+    end
+    subgraph CTL["Cross-cutting controls"]
+        JS["JSON Schema 2020-12 validate_input (additionalProperties=false)"]
+        TG["tool_guard: SSRF egress allowlist + per-caller scopes"]
+        TA["tool_audit: append-only, args-hashed"]
+        IN["integrity: sha256 descriptor checksums"]
+    end
+    subgraph PROV["Provider adapters (Strategy)"]
+        P0["MockProvider (keyless default)"]
+        P1[FedExProvider]
+        P2[UPSProvider]
+        P3[USPSProvider]
+        P4[DHLProvider]
+    end
+    CARR["Carrier REST APIs (sandbox base URLs)"]
+    APP --> REG
+    REG --> CTL
+    REG --> PROV
+    PROV -->|"httpx, explicit timeouts"| CARR
+```
+
+**Patterns:** Adapter/Strategy (one `ShippingProvider` port, five adapters) ·
+Registry (discovery + lookup) · least privilege as a **boot invariant** · Guard
+(egress + caller scopes) · content-addressable integrity (descriptor checksums).
+
+---
+
 ## The headline invariant
 
-`READ_ONLY_TOOL_ALLOWLIST` is a **`frozenset`**, and `_enforce_read_only()` runs
-at startup:
+`READ_ONLY_TOOL_ALLOWLIST` is a **`frozenset`**, and `_enforce_read_only()`
+runs at startup:
 
 ```
 Refusing to start: non-read-only tool(s) registered: [...].
@@ -72,9 +129,21 @@ ShipSmart-MCP serves read/preview tools only; writes, bookings, and
 money movement belong to the Java Orchestrator.
 ```
 
-Least privilege as a **boot-time property**, not a runtime hope: a developer who
+**Figure 2 — least privilege as a boot-time property.** A developer who
 registers a write tool can't even start the service — the mistake fails loudly
 in dev and CI, never silently in production.
+
+```mermaid
+flowchart TB
+    S[Service starting] --> B["_build_registry()"]
+    B --> E["_enforce_read_only(registry)"]
+    E --> C{"served tools ⊆ READ_ONLY_TOOL_ALLOWLIST?"}
+    C -->|yes| UP["App serves traffic"]
+    C -->|no| X["raise RuntimeError — refuse to start"]
+    X --> MSG["writes, bookings, money movement belong to the Java Orchestrator"]
+```
+
+---
 
 ## HTTP contract
 
@@ -88,6 +157,83 @@ in dev and CI, never silently in production.
 `X-MCP-Api-Key` (shared key) gates the tool routes — this is an internal
 service, called by the API, never by browsers.
 
+---
+
+## Anatomy of a tool call
+
+**Figure 3 — `/tools/call` happy path: five controls in order.**
+
+```mermaid
+sequenceDiagram
+    participant C as Caller (ShipSmart-API)
+    participant A as FastAPI (require_api_key)
+    participant R as ToolRegistry
+    participant G as tool_guard
+    participant P as Provider adapter
+    participant AU as tool_audit
+    C->>A: POST /tools/call (X-MCP-Api-Key)
+    A->>R: lookup(tool)
+    R->>R: validate_input (JSON Schema 2020-12)
+    R->>G: is_authorized(caller, tool)? egress allowed?
+    G-->>R: allowed
+    R->>P: execute(args)
+    P->>P: httpx call, explicit timeout
+    P-->>R: read-only result
+    R->>AU: record(tool, caller, request_id, args_hash, status, latency_ms)
+    R-->>C: typed result
+```
+
+**Figure 4 — SSRF denial: blocked before any network I/O.** The same guard
+denies any non-allowlisted host and every private/loopback/link-local IP
+literal (the cloud metadata-endpoint attack).
+
+```mermaid
+sequenceDiagram
+    participant T as Tool execution
+    participant G as tool_guard
+    T->>G: assert_egress_allowed("http://169.254.169.254/...")
+    G->>G: _is_public? link-local IP literal detected
+    G--xT: EgressDeniedError (no request ever leaves)
+```
+
+**Figure 5 — schema rejection & descriptor drift: both fail closed.**
+
+```mermaid
+sequenceDiagram
+    participant C as Caller
+    participant R as Registry
+    participant I as integrity
+    C->>R: tools/call with unexpected field
+    R--xC: validation error (additionalProperties=false, before execute())
+    C->>I: verify_descriptors(registry, expected_checksums)
+    I-->>C: drift list (changed / added / removed descriptors)
+    Note over I: sha256 over name + description + input schema
+```
+
+**Figure 6 — tool-call lifecycle (state machine).** Every terminal state —
+success, failure, or denial — passes through the audit before the response
+leaves.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Received: POST /tools/call
+    Received --> Authenticated: X-MCP-Api-Key ok
+    Received --> Rejected: bad or missing key (401)
+    Authenticated --> Validated: JSON Schema ok
+    Authenticated --> Rejected: unknown or invalid args
+    Validated --> Guarded: caller in scope AND egress allowed
+    Validated --> Denied: off-scope or EgressDenied
+    Guarded --> Executing: adapter call (timeout armed)
+    Executing --> Succeeded: carrier or pure result
+    Executing --> Failed: timeout or carrier error
+    Succeeded --> Audited: args-hashed record
+    Failed --> Audited: error_class recorded
+    Denied --> Audited
+    Audited --> [*]
+```
+
+---
+
 ## Tools
 
 | Tool | Kind | Honest semantics |
@@ -99,43 +245,151 @@ service, called by the API, never by browsers.
 | `parse_address` | pure | freeform → components + rule-derived confidence; **reports missing parts, never guesses** |
 | `check_restricted_items` | corpus-backed | allowed/warning/prohibited + source; **advisory-only — never asserts "cleared"** |
 
-Every tool subclasses one `Tool` ABC that derives a full **JSON Schema (Draft
-2020-12)** — typed properties, `required`, **`additionalProperties: false`** —
-and runs `validate_input()` **before** `execute()`. One schema powers both
-discovery and enforcement.
+---
 
-## Security layers
+## Object design (OOD)
+
+**Figure 7 — class model.** Tools depend on the provider **port**, never a
+concrete carrier — adding a carrier is a new adapter; the tool layer is
+untouched.
+
+```mermaid
+classDiagram
+    class Tool {
+        <<abstract>>
+        +name
+        +description
+        +parameters
+        +schema() JSONSchema2020_12
+        +validate_input(args)
+        +execute(args)
+    }
+    Tool <|-- ValidateAddress
+    Tool <|-- GetQuotePreview
+    Tool <|-- CalculateDimensionalWeight
+    Tool <|-- EstimatePackageProfile
+    Tool <|-- ParseAddress
+    Tool <|-- CheckRestrictedItems
+    class ToolRegistry {
+        +list_tools()
+        +get(name)
+    }
+    ToolRegistry o-- Tool
+    class ShippingProvider {
+        <<interface>>
+        +validate_address()
+        +quote_preview()
+    }
+    ShippingProvider <|.. MockProvider
+    ShippingProvider <|.. FedExProvider
+    ShippingProvider <|.. UPSProvider
+    ShippingProvider <|.. USPSProvider
+    ShippingProvider <|.. DHLProvider
+    GetQuotePreview ..> ShippingProvider
+    ValidateAddress ..> ShippingProvider
+    class ToolGuard {
+        +allowed_hosts()
+        +check_egress(url)
+        +is_authorized(caller, tool)
+    }
+    class ToolAudit {
+        +args_hash(args) sha256
+        +record(...)
+    }
+```
+
+---
+
+## Security layers & threat model
 
 Five independent controls stack on every call:
 
-1. **Shared-key auth** (`require_api_key`).
-2. **SSRF egress allowlist** (`app/core/tool_guard.py`) — tools may only reach
-   allowlisted carrier hosts; private/loopback/link-local IP literals (cloud
-   metadata endpoints) are denied **before any network I/O**.
-3. **Per-caller tool scopes** — an unknown caller or off-scope tool is denied,
-   not merely hidden.
-4. **Descriptor integrity** (`app/tools/integrity.py`) — sha256 checksums over
-   each tool's name + description + schema; drift (changed/added/removed
-   descriptors) is detectable. The tool list the model sees is itself a
-   supply-chain surface.
-5. **Append-only tool audit** (`app/core/tool_audit.py`) — tool, version,
-   caller, request_id, **args-hash** (never raw args — PII-safe), status,
-   error_class, latency_ms.
+1. **Shared-key auth** — `require_api_key` (`X-MCP-Api-Key`).
+2. **SSRF egress allowlist** — allowlisted carrier hosts only;
+   private/loopback/link-local IP literals denied before any I/O.
+3. **Per-caller tool scopes** — off-scope tools are denied, not merely hidden.
+4. **Descriptor integrity** — sha256 checksums make registry drift detectable.
+5. **Append-only, args-hashed audit** — full observability, no PII store.
 
-## Architecture
+| Threat | Control |
+|---|---|
+| Unauthenticated access | shared-key `X-MCP-Api-Key` on tool routes |
+| SSRF / metadata endpoint | egress allowlist + private-IP denial |
+| Caller privilege creep | per-caller tool scopes |
+| Poisoned tool descriptors (supply chain) | sha256 checksums + `verify_descriptors` |
+| PII in audit | args-hash, never raw args |
+| Write capability smuggled in | frozen allowlist + boot-time `RuntimeError` |
 
+---
+
+## The audit trail
+
+**Figure 8 — one PII-safe record per call.** Raw arguments (which may carry
+addresses) are never stored — only their hash, which still allows exact-call
+correlation.
+
+```mermaid
+flowchart LR
+    CALL["tools/call"] --> H["args_hash = sha256(args)"]
+    H --> REC["record: tool · version · caller · request_id · args_hash · status · error_class · latency_ms"]
+    REC --> LOG[("append-only tool audit")]
+    LOG --> Q["what did the tool layer do, for whom, how fast = a query"]
 ```
-  ShipSmart-API ──(MCP/HTTP + X-MCP-Api-Key)──▶ FastAPI app
-      └─▶ ToolRegistry (6 tools, self-describing schemas)
-             ├─ JSON-Schema validate → tool_guard (egress + scopes) → execute
-             ├─ integrity: descriptor checksums
-             └─ tool_audit: append-only, args-hashed
-      └─▶ ShippingProvider port → FedEx | UPS | USPS | DHL | Mock (default)
-            (httpx, explicit timeouts, sandbox base URLs)
+
+---
+
+## Performance & availability
+
+*(This service is stateless — it owns no database, so there is no
+entity-relationship model here; the platform's ER story lives in
+[ShipSmart-Infra](https://github.com/nia194/ShipSmart-Infra).)*
+
+**Latency budget (target):**
+
+| Tool | Validation | Carrier RTT | Total *(target)* |
+|---|---|---|---|
+| pure tools (×3) | ~2 ms | — | **< 10 ms** |
+| validate_address | ~2 ms | 300–1500 ms | **< 2000 ms** |
+| get_quote_preview | ~2 ms | 300–1800 ms | **< 2000 ms** |
+
+```mermaid
+xychart-beta
+    title "Tool latency budget in ms (target)"
+    x-axis ["pure-tools", "validate_address", "quote_preview"]
+    y-axis "ms (target)" 0 --> 2000
+    bar [10, 1200, 1800]
 ```
 
-Adding a carrier is a new adapter — the tools never change. `_build_registry()`
-is module-level so tests can rebuild the registry after monkey-patching.
+**Availability & degradation (coded behaviors, facts):**
+
+| Failure | Behavior |
+|---|---|
+| Carrier timeout | explicit httpx timeout → typed error, `error_class` audited |
+| No carrier keys | MockProvider default — fully functional, keyless |
+| Bad caller key | 401 at `require_api_key` — tools never execute |
+| Off-scope caller | denied by `tool_guard` scopes |
+
+Availability **99.5% (target)**; probes: `GET /health` (the tool count doubles
+as a registry-drift canary) and `GET /` discovery.
+
+---
+
+## Deployment topology
+
+**Figure 9 — production layout.** Called only by the API; `/docs` off in prod;
+sandbox carrier base URLs by default.
+
+```mermaid
+flowchart LR
+    A["Render: shipsmart-api-python"] -->|X-MCP-Api-Key| M["Render: shipsmart-mcp (this)"]
+    M --> C1["FedEx sandbox"]
+    M --> C2["UPS sandbox"]
+    M --> C3["USPS sandbox"]
+    M --> C4["DHL sandbox"]
+    OPS[Operator] -.->|"GET /health — tool count"| M
+```
+
+---
 
 ## Running locally
 
