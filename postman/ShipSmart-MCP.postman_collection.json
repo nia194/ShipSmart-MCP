@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "ShipSmart-MCP",
-    "description": "MCP tool server contract: discovery, tools/list, tools/call, the read-only invariant, and the validation-vs-execute error split. Runs against the mock provider.",
+    "description": "MCP tool server contract: discovery, tools/list, tools/call, the read-only invariant, and the validation-vs-execute error split. Runs against the mock provider. Covers the full six-tool read-only registry.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -112,8 +112,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('200', () => pm.response.to.have.status(200));",
-                  "const names = pm.response.json().tools.map(t => t.name);",
-                  "pm.test('exposes both tools', () => { pm.expect(names).to.include('validate_address'); pm.expect(names).to.include('get_quote_preview'); });",
+                  "const names = pm.response.json().tools.map(t => t.name).sort();",
+                  "pm.test('exposes the six read-only tools', () => pm.expect(names).to.eql(['calculate_dimensional_weight','check_restricted_items','estimate_package_profile','get_quote_preview','parse_address','validate_address']));",
                   "pm.test('read-only invariant (no write tools)', () => pm.expect(names.filter(n => /book|write|save|create|delete/.test(n))).to.be.empty);"
                 ]
               }
@@ -342,6 +342,192 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"get_quote_preview\",\n  \"arguments\": {\n    \"origin_zip\": \"60601\",\n    \"destination_zip\": \"02108\",\n    \"weight_lbs\": 5\n  }\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "tools/call \u2014 expanded read-only registry",
+      "item": [
+        {
+          "name": "parse_address \u2014 free text to components",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('success', () => pm.expect(b.success).to.eql(true));",
+                  "const out = JSON.parse(b.content[0].text);",
+                  "pm.test('parsed to complete components', () => { pm.expect(out.components.postal_code).to.eql('90001'); pm.expect(out.is_complete).to.eql(true); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/tools/call",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "tools",
+                "call"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"parse_address\",\n  \"arguments\": {\n    \"address\": \"1 Main St, Los Angeles, CA 90001\"\n  }\n}"
+            }
+          }
+        },
+        {
+          "name": "calculate_dimensional_weight \u2014 billable weight",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('success', () => pm.expect(b.success).to.eql(true));",
+                  "const out = JSON.parse(b.content[0].text);",
+                  "pm.test('dimensional basis beats actual weight', () => { pm.expect(out.basis).to.eql('dimensional'); pm.expect(out.billable_weight_lbs).to.be.at.least(out.actual_weight_lbs); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/tools/call",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "tools",
+                "call"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"calculate_dimensional_weight\",\n  \"arguments\": {\n    \"length_in\": 20,\n    \"width_in\": 16,\n    \"height_in\": 12,\n    \"actual_weight_lbs\": 5\n  }\n}"
+            }
+          }
+        },
+        {
+          "name": "check_restricted_items \u2014 lithium battery warning",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('success', () => pm.expect(b.success).to.eql(true));",
+                  "const out = JSON.parse(b.content[0].text);",
+                  "pm.test('flags dangerous goods with a sourced reason', () => { pm.expect(out.status).to.eql('warning'); pm.expect(out.reason).to.be.a('string').that.is.not.empty; pm.expect(out.source).to.include('compliance/'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/tools/call",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "tools",
+                "call"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"check_restricted_items\",\n  \"arguments\": {\n    \"item\": \"lithium battery power bank\"\n  }\n}"
+            }
+          }
+        },
+        {
+          "name": "estimate_package_profile \u2014 labelled estimate",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('success', () => pm.expect(b.success).to.eql(true));",
+                  "const out = JSON.parse(b.content[0].text);",
+                  "pm.test('estimate flagged as such with dims', () => { pm.expect(out.is_estimate).to.eql(true); pm.expect(out.length_in).to.be.above(0); pm.expect(out.weight_lbs).to.be.above(0); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Request-Id",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/tools/call",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "tools",
+                "call"
+              ]
+            },
+            "description": "Profile must be one of the labelled values (documents / small_box / medium_box / large_box / electronics / suitcase); estimates are explicitly flagged and never a booking basis.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"estimate_package_profile\",\n  \"arguments\": {\n    \"profile\": \"medium_box\"\n  }\n}"
             }
           }
         }
